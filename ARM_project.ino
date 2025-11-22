@@ -11,6 +11,7 @@ const float C = 0.5;
 int SpeedOFMotor = 20;
 
 long currentSteps = 0;
+bool done = false;
 
 unsigned long previousMillis = 0;
 const unsigned long interval = 2000;
@@ -18,10 +19,10 @@ int state = 0;
 
 // زوايا الانحناء
 float angleRight = 7.0;
-float angleLeft = -12.0;
+float angleLeft = -11.0;
 float angleNeutral = 0.0;
 
-int stepsFromAngle(float O) { 
+int stepsFromAngle(float O) {
   float L = R * (exp(C * abs(O)) - 1);
   int steps = L / D_in_S;
   return steps;
@@ -55,21 +56,21 @@ void setup() {
 void loop() {
   unsigned long currentMillis = millis();
 
-  if (currentMillis - previousMillis >= interval) {
-    previousMillis = currentMillis;
+  if (!done) {
 
-    if (state == 0) {
-      Serial.println("🟢 الذراع ينحني لليمين");
-      moveBothMotors(angleRight);
-      state = 1;
-    } else if (state == 1) {
-      Serial.println("🔵 الذراع ينحني لليسار");
-      moveBothMotors(angleLeft);
-      state = 2;
-    } else {
-      Serial.println("⚪ العودة إلى المنتصف");
-      moveBothMotors(angleNeutral);
-      state = 0;
-    }
+
+
+    Serial.println("🟢 الذراع ينحني لليمين");
+    moveBothMotors(angleRight);
+
+
+    Serial.println("🔵 الذراع ينحني لليسار");
+    moveBothMotors(angleLeft);
+
+
+    Serial.println("⚪ العودة إلى المنتصف");
+    moveBothMotors(angleNeutral);
+
+    done = true;
   }
 }
