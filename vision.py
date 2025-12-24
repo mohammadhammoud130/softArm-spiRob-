@@ -5,116 +5,134 @@ import serial
 import math
 import os
 
-# Load your trained model
-model = YOLO("/home/mohammoud/Desktop/softarm/py/runs/detect/train_bbox_fff_m_finalTarget5552/weights/best.pt")
-# Open camera (adjust index if needed)
+# --- Configuration ---
+MODEL_PATH = "epoch_61-mAP50_0p9034.pt"
+model = YOLO(MODEL_PATH)
+
+# Camera and FPS
 cap = cv2.VideoCapture(2)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+FPS_LIMIT = 5
+FRAME_DELAY = 1.0 / FPS_LIMIT
 
-fps_limit = 5
-frame_delay = 1.0 / fps_limit  # seconds between frames
-
-# Try to open serial connection to Arduino
+# --- Arduino Connection ---
 arduino = None
-port = "/dev/ttyACM0"
-if os.path.exists(port):
+ARDUINO_PORT = "/dev/ttyACM0"
+if os.path.exists(ARDUINO_PORT):
     try:
-        arduino = serial.Serial(port, 9600, timeout=1)
-        print("Arduino connected on", port)
+        arduino = serial.Serial(ARDUINO_PORT, 9600, timeout=1)
+        print("✅ Arduino connected on", ARDUINO_PORT)
     except serial.SerialException as e:
-        print("Could not open port:", e)
+        print(f"⚠️ Could not open port {ARDUINO_PORT}: {e}")
         arduino = None
 else:
-    print("No Arduino detected, running vision only.")
+    print("ℹ️ No Arduino detected. Running in vision-only mode.")
 
-# Define the target classes
-target_classes = ["cube", "ping pong ball", "water-bottle", "SpiRob"]
-
-# Known real-world widths (cm) for each object
+# --- Object Definitions ---
+target_classes = ["cube", "ping pong ball", "water-bottle"]
 known_widths = {
     "cube": 5.5,
     "ping pong ball": 4.0,
     "water-bottle": 6.5,
-    "SpiRob": 7.0
 }
 
-cv2.namedWindow("YOLO Detection (Objects Only)")
+print("\nStarting detection loop... Press 'q' in the window to quit.")
 
-while True:
-    start_time = time.time()
+# --- Main Loop ---
+try:
+    while True:
+        start_time = time.time()
+        ret, frame = cap.read()
+        if not ret:
+            print("❌ Failed to grab frame from camera.")
+            break
 
-    ret, frame = cap.read()
-    if not ret:
-        break
+        # Run YOLO inference
+        results = model(frame, conf=0.35)
+        annotated_frame = results[0].plot() # This draws the bounding box and class name
 
-    # Run YOLO inference
-    results = model(frame, conf=0.25)
+        h, w, _ = frame.shape
+        arm_center_x = w // 2
+        arm_center_y = h // 2
+        cv2.circle(annotated_frame, (arm_center_x, arm_center_y), 7, (0, 0, 255), -1)
 
-    # Annotated frame
-    annotated_frame = results[0].plot()
+        # Loop through all detected objects
+        for box in results[0].boxes:
+            cls_id = int(box.cls[0])
+            cls_name = model.names[cls_id]
 
-    # Add back line and center dot
-    h, w, _ = frame.shape
-    mid_x = w // 2
-    mid_y = h // 2
-    cv2.line(annotated_frame, (mid_x, 0), (mid_x, h), (0, 255, 0), 2)
-    cv2.circle(annotated_frame, (mid_x, mid_y), 5, (0, 0, 255), -1)
+            if cls_name not in target_classes:
+                continue
 
+            # --- Get Object Info ---
+            x_center_px, y_center_px, width_px, _ = box.xywh[0]
 
-    # Loop through detections
-    for box in results[0].boxes:
-        cls_id = int(box.cls[0])
-        cls_name = model.names[cls_id]
-        print("Detected:", cls_name)
+            # --- Calculate all values in Centimeters ---
+            real_width_cm = known_widths.get(cls_name)
+            if not real_width_cm: continue
+            cm_per_pixel = real_width_cm / float(width_px)
 
-        if cls_name in target_classes:
-            x_center = float(box.xywh[0][0])
-            y_center = float(box.xywh[0][1])
-            pixel_width = float(box.xywh[0][2])
+            pos_x_cm = (float(x_center_px) - arm_center_x) * cm_per_pixel
+            pos_y_cm = (float(y_center_px) - arm_center_y) * cm_per_pixel
+            distance_cm = math.sqrt(pos_x_cm**2 + pos_y_cm**2)
 
-            # Pixel distance from frame center
-            pixel_distance = math.sqrt((x_center - mid_x)**2 + (y_center - mid_y)**2)
-            side = "-1" if x_center < mid_x else "1"
+            size_cm = real_width_cm / 2.0 if cls_name in ["ping pong ball", "cube"] else real_width_cm
 
-            # Use object-specific real-world width
-            real_width_cm = known_widths.get(cls_name, 5.0)
-            cm_per_pixel = real_width_cm / pixel_width
-            real_distance_cm = pixel_distance * cm_per_pixel
+            # --- Prepare and Send Serial Data in CM ---
+            serial_message = f"{cls_name},{pos_x_cm:.2f},{pos_y_cm:.2f},{distance_cm:.2f},{size_cm:.2f}\n"
 
-            # Calculate radius/diameter depending on object
-            if cls_name in ["ping pong ball", "cube"]:
-                size_cm = real_width_cm / 2.0  # radius
-                size_label = "radius"
-            elif cls_name == "water-bottle":
-                size_cm = real_width_cm       # short diameter
-                size_label = "diameter"
-            else:
-                size_cm = real_width_cm
-                size_label = "size"
-
-            # Print info
-            print(f"{cls_name} → {side}, dist ≈ {real_distance_cm:.1f}cm, {size_label} ≈ {size_cm:.1f}cm")
-
-            # Overlay text
-            cv2.putText(annotated_frame, f"{side} | {real_distance_cm:.1f}cm | {size_label}:{size_cm:.1f}cm",
-                        (int(x_center), int(y_center)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-            # Send to Arduino
             if arduino and arduino.is_open:
                 try:
-                    arduino.write(f"{side},{real_distance_cm:.1f},{size_cm:.1f}\n".encode())
+                    arduino.write(serial_message.encode())
+                    # Only print if you need to debug; can be noisy
+                    # print(f"Sent (cm): {serial_message.strip()}")
                 except serial.SerialException as e:
-                    print("Serial write failed:", e)
+                    print(f"❌ Serial write failed: {e}")
+            else:
+                 # Only print if you need to debug
+                print(f"Would Send (cm): {serial_message.strip()}")
 
-    cv2.imshow("YOLO Detection (Objects Only)", annotated_frame)
 
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
+            # NEW: Show the calculated info on the screen
+            # ----------------------------------------------------
+            text_line1 = f"Dist: {distance_cm:.1f} cm"
+            text_line2 = f"Pos: ({pos_x_cm:.1f}, {pos_y_cm:.1f}) cm"
 
-    # Throttle to 5 FPS
-    elapsed = time.time() - start_time
-    if elapsed < frame_delay:
-        time.sleep(frame_delay - elapsed)
+            # Get the top-left corner of the bounding box to position the text
+            top_left_x = int(box.xyxy[0][0])
+            top_left_y = int(box.xyxy[0][1])
 
-cap.release()
-cv2.destroyAllWindows()
+            # Draw the text just above the bounding box
+            cv2.putText(annotated_frame, text_line1,
+                        (top_left_x, top_left_y - 35), # Position for line 1
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2) # Yellow color
+
+            cv2.putText(annotated_frame, text_line2,
+                        (top_left_x, top_left_y - 10), # Position for line 2
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2) # Yellow color
+            # ----------------------------------------------------
+
+
+        # Resize the frame for a larger display window
+        display_frame = cv2.resize(annotated_frame, (960, 720))
+        cv2.imshow("Soft Arm Vision (Large)", display_frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+        # Throttle the loop
+        elapsed = time.time() - start_time
+        if elapsed < FRAME_DELAY:
+            time.sleep(FRAME_DELAY - elapsed)
+
+except KeyboardInterrupt:
+    print("\nLoop interrupted by user.")
+finally:
+    # --- Cleanup ---
+    print("Cleaning up and shutting down.")
+    cap.release()
+    cv2.destroyAllWindows()
+    if arduino and arduino.is_open:
+        arduino.close()
+    print("Program finished.")
