@@ -12,6 +12,9 @@ int stepsRight = 4000;
 int stepsLeft  = -4000;
 int stepsNeutral = 0;
 
+int steps500 = 1000;
+int steps5000 = 10000;
+
 bool done = false;
 
 void setup() {
@@ -31,15 +34,7 @@ void setup() {
 
 void loop() {
   if (!done) {
-    // delay(2000);
-
-    // motorL.moveTo(stepsRight);
-    // motorR.moveTo(stepsRight);
-    // while (motorL.distanceToGo() != 0 || motorR.distanceToGo() != 0) {
-    //   motorL.run();
-    //   motorR.run();
-    // }
-  
+    
     delay(2000);
 
     motorL.moveTo(stepsLeft);
@@ -48,27 +43,20 @@ void loop() {
       motorL.run();
       motorR.run();
     }
-  
-    delay(2000);
+   
+    delay(500);
 
-    motorL.setMaxSpeed(300);
-    motorR.setMaxSpeed(700);
-    motorL.moveTo(500);
-    motorR.moveTo(8000);
+    
+    motorL.setMaxSpeed(400);
+    motorL.setAcceleration(100);
+    motorR.setMaxSpeed(700); 
+    motorR.setAcceleration(300);
+    motorL.moveTo(steps500);
+    motorR.moveTo(steps5000);
     while (motorL.distanceToGo() != 0 || motorR.distanceToGo() != 0) {
       motorL.run();
       motorR.run();
     }
-    
-    delay(2000);
-
-    motorL.moveTo(stepsNeutral);
-    motorR.moveTo(stepsNeutral);
-    while (motorL.distanceToGo() != 0 || motorR.distanceToGo() != 0) {
-      motorL.run();
-      motorR.run();
-    }
-    
 
     done = true;
   }
